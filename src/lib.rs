@@ -138,7 +138,7 @@ impl CompressionUtils {
         let reader = rocket::tokio::io::BufReader::new(body);
         let mut out = Vec::new();
         match (encoding, level) {
-            // The broli library used internally by `async-compression` has a default compression level of "best", or 11.  This
+            // The brotli library used internally by `async-compression` has a default compression level of "best", or 11.  This
             // is unsuitable for dynamic data and makes compression extremely slow.
             //
             // We set a compression level of 4 if the user requests default which matches the behavior of Nginx.
