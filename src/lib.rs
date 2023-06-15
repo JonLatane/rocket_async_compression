@@ -20,6 +20,7 @@ pub use self::{
     responder::Compress,
 };
 
+use async_compression::tokio::bufread::{BrotliEncoder, GzipEncoder};
 pub use async_compression::Level;
 use fairing::CachedEncoding;
 use rocket::{
@@ -134,35 +135,31 @@ impl CompressionUtils {
         encoding: CachedEncoding,
         level: async_compression::Level,
     ) -> std::io::Result<Vec<u8>> {
-        match encoding {
-            CachedEncoding::Brotli => {
-                // The broli library used internally by `async-compression` has a default compression level of "best", or 11.  This
-                // is unsuitable for dynamic data and makes compression extremely slow.
-                //
-                // We set a compression level of 4 if the user requests default which matches the behavior of Nginx.
-                let level = match level {
-                    async_compression::Level::Default => async_compression::Level::Precise(4),
-                    other => other,
-                };
+        let reader = rocket::tokio::io::BufReader::new(body);
+        let mut out = Vec::new();
+        match (encoding, level) {
+            // The broli library used internally by `async-compression` has a default compression level of "best", or 11.  This
+            // is unsuitable for dynamic data and makes compression extremely slow.
+            //
+            // We set a compression level of 4 if the user requests default which matches the behavior of Nginx.
+            (CachedEncoding::Brotli, Level::Default) => {
+                rocket::tokio::io::copy(
+                    &mut BrotliEncoder::with_quality(reader, Level::Precise(4)),
+                    &mut out,
+                )
+                .await?
+            }
+            (CachedEncoding::Brotli, level) => {
+                rocket::tokio::io::copy(&mut BrotliEncoder::with_quality(reader, level), &mut out)
+                    .await?
+            }
 
-                let mut compressor = async_compression::tokio::bufread::BrotliEncoder::with_quality(
-                    rocket::tokio::io::BufReader::new(body),
-                    level,
-                );
-                let mut out = Vec::new();
-                rocket::tokio::io::copy(&mut compressor, &mut out).await?;
-                Ok(out)
+            (CachedEncoding::Gzip, level) => {
+                rocket::tokio::io::copy(&mut GzipEncoder::with_quality(reader, level), &mut out)
+                    .await?
             }
-            CachedEncoding::Gzip => {
-                let mut compressor = async_compression::tokio::bufread::GzipEncoder::with_quality(
-                    rocket::tokio::io::BufReader::new(body),
-                    level,
-                );
-                let mut out = Vec::new();
-                rocket::tokio::io::copy(&mut compressor, &mut out).await?;
-                Ok(out)
-            }
-        }
+        };
+        Ok(out)
     }
 
     fn compress_response<'r>(
